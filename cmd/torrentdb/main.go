@@ -128,7 +128,7 @@ func processFiles(torrentFiles []string, hashList []string) ([]string, []string)
 		hashID := sort.SearchStrings(hashList, hash)
 
 		if hashID > len(hashList)-1 || hashList[hashID] != hash {
-			line := torrentToLine(t)
+			line := torrentToLine(t, stat)
 			newTorrents = append(newTorrents, printLine(line))
 			dumpTFiles(fFiles, line, t)
 		} else {
@@ -226,17 +226,16 @@ func parseLine(l string) lineStruct {
 	return line
 }
 
-func torrentToLine(t *tp.Info) lineStruct {
+func torrentToLine(t *tp.Info, stat os.FileInfo) lineStruct {
 
 	var line lineStruct
-	dt := time.Now()
-	today := dt.Format("2006-01-02")
+	mtime := stat.ModTime().Format("2006-01-02")
 
 	line.hash = hex.EncodeToString(t.Hash[:])
 	line.size = int(t.Length)
 	line.files = len(t.Files)
-	line.firstSeen = today
-	line.lastSeen = today
+	line.firstSeen = mtime
+	line.lastSeen = mtime
 	line.hits = 1
 	line.name = t.Name
 
