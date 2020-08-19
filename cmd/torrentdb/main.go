@@ -419,5 +419,3 @@ func logParseError(logmsg string, logerr error) {
 	log.Println(logmsg, logerr)
 }
 
-
-// FUCK YOU. hahahahahaha!
