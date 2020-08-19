@@ -1,0 +1,2 @@
+scan unixtime	scan datetime	               new	   updated	  rejected	 processed	     files	  db total
+1597697307	2020-08-17 22:48	         6	         0	         0	         6	         6	         6

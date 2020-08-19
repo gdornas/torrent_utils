@@ -1,3 +1,4 @@
 *.swp
 bin/*
 go.sum
+test/tmp
