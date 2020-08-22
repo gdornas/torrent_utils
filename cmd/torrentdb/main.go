@@ -72,31 +72,32 @@ func main() {
 	stats.countFiles = len(torrentFiles)
 
 	fmt.Println("* loading torrents.tsv into memory...")
-	torrents, hashList := loadTorrents()
+	hashList, indexList := loadTorrents()
 
 	fmt.Println("* parsing torrent files, updating the buffers and dumping torrent files...")
-	newTorrents, updatedHashList := processFiles(torrentFiles, hashList)
-	sort.Strings(updatedHashList)
+	newTorrents := processFiles(torrentFiles, hashList, indexList)
 
 	stats.countNew = len(newTorrents)
-	stats.countUpdated = len(updatedHashList)
-	stats.countPreTotal = len(torrents)
+	stats.countPreTotal = len(hashList)
 
 	fmt.Println("* dumping torrent.tsv...")
-	dumpTorrents(torrents, newTorrents, updatedHashList)
+	//dumpTorrents(torrents, newTorrents )
 	dumpStats()
 }
 
-func processFiles(torrentFiles []string, hashList []string) ([]string, []string) {
+func processFiles(torrentFiles []string, hashList []string, indexList []int64) []string {
 
 	var newTorrents []string
-	var updatedHashList []string
+
+	torrentsFile := *args.dbdir + "/torrents.tsv"
+	fTorrents, err := os.OpenFile(torrentsFile, os.O_CREATE|os.O_RDWR, 0644)
+	defer fTorrents.Close()
+	errExit(err)
 
 	filesFile := *args.dbdir + "/files.tsv"
 	fFiles, err := os.OpenFile(filesFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	defer fFiles.Close()
 	errExit(err)
-
 
 	for _, torrentFile := range torrentFiles {
 
@@ -128,15 +129,50 @@ func processFiles(torrentFiles []string, hashList []string) ([]string, []string)
 		hashID := sort.SearchStrings(hashList, hash)
 
 		if hashID > len(hashList)-1 || hashList[hashID] != hash {
+
 			line := torrentToLine(t, stat)
 			newTorrents = append(newTorrents, printLine(line))
 			dumpTFiles(fFiles, line, t)
+
 		} else {
-			updatedHashList = append(updatedHashList, hashList[hashID])
+			updateLine(fTorrents, indexList, hash, hashID, stat)
 		}
 	}
 
-	return newTorrents, updatedHashList
+	_, err = fTorrents.Seek(0, 2)
+	errExit(err)
+	for _, l := range newTorrents {
+		fmt.Fprintln(fTorrents, l)
+	}
+
+	return newTorrents
+}
+
+func updateLine(fTorrents *os.File, indexList []int64, hash string, hashID int,
+	stat os.FileInfo) {
+
+	_, err := fTorrents.Seek(indexList[hashID], 0)
+	errExit(err)
+
+	var line lineStruct
+	_, err = fmt.Fscan(fTorrents,
+		&line.hash,
+		&line.size,
+		&line.files,
+		&line.firstSeen,
+		&line.lastSeen,
+		&line.hits)
+	errExit(err)
+
+	line.hits++
+	line.lastSeen = stat.ModTime().Format("2006-01-02")
+
+	//check_hash
+
+	_, err = fTorrents.Seek(indexList[hashID], 0)
+	fmt.Fprint(fTorrents, printLine(line))
+
+	stats.countUpdated++
 }
 
 func getLastScan() int64 {
@@ -168,10 +204,12 @@ func getLastScan() int64 {
 	return lastScan
 }
 
-func loadTorrents() ([]string, []string) {
+func loadTorrents() ([]string, []int64) {
 
-	var torrents []string
 	var hashList []string
+	var indexList []int64
+	var hashIndexList []string
+	var lineIndex int64
 
 	inFile := *args.dbdir + "/torrents.tsv"
 
@@ -190,14 +228,32 @@ func loadTorrents() ([]string, []string) {
 	for scanner.Scan() {
 
 		l := scanner.Text()
-		hash := strings.Split(l, "\t")[0]
-		torrents = append(torrents, l)
-		hashList = append(hashList, hash)
+		iStr := strconv.FormatInt(lineIndex, 10)
+
+		hashIndex := strings.Split(l, "\t")[0] + "\t" + iStr
+		hashIndexList = append(hashIndexList, hashIndex)
+		lineIndex += int64(len(l)) + 1
 	}
 
-	sort.Strings(hashList)
+	sort.Strings(hashIndexList)
 
-	return torrents, hashList
+	for _, hashIndex := range hashIndexList {
+
+		hi := strings.Split(hashIndex, "\t")
+		hash := hi[0]
+		index, err := strconv.ParseInt(hi[1], 10, 64)
+		errExit(err)
+
+		if len(hash) != 40 || index < 0 {
+			errExit(fmt.Errorf("incorrect hash and index: %s - %s",
+				hash, index))
+		}
+
+		hashList = append(hashList, hash)
+		indexList = append(indexList, index)
+	}
+
+	return hashList, indexList
 }
 
 func parseLine(l string) lineStruct {
@@ -300,36 +356,6 @@ func stringIsAllowed(s string) (bool, rune, int) {
 	return true, '0', 0
 }
 
-func dumpTorrents(torrents []string, newTorrents []string, updatedHashList []string) {
-
-	torrentsFile := *args.dbdir + "/torrents.tsv"
-	fTorrents, err := os.OpenFile(torrentsFile, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
-	defer fTorrents.Close()
-	errExit(err)
-
-	dt := time.Now()
-	today := dt.Format("2006-01-02")
-
-	for _, l := range torrents {
-
-		line := parseLine(l)
-		hashID := sort.SearchStrings(updatedHashList, line.hash)
-
-		if hashID > len(updatedHashList)-1 || updatedHashList[hashID] != line.hash {
-			fmt.Fprintln(fTorrents, l)
-		} else {
-			line.hits++
-			line.lastSeen = today
-			l = printLine(line)
-			fmt.Fprintln(fTorrents, l)
-		}
-	}
-
-	for _, l := range newTorrents {
-		fmt.Fprintln(fTorrents, l)
-	}
-}
-
 func dumpTFiles(fFiles *os.File, line lineStruct, t *tp.Info) {
 
 	fmt.Fprintln(fFiles, "hash:", line.hash)
@@ -418,4 +444,3 @@ func logParseError(logmsg string, logerr error) {
 	log.SetOutput(f)
 	log.Println(logmsg, logerr)
 }
-
