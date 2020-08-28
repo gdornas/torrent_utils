@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -75,9 +76,8 @@ func main() {
 	hashList, indexList := loadTorrents()
 
 	fmt.Println("* parsing torrent files, updating the buffers and dumping torrent files...")
-	newTorrents := processFiles(torrentFiles, hashList, indexList)
+	processFiles(torrentFiles, hashList, indexList)
 
-	stats.countNew = len(newTorrents)
 	stats.countPreTotal = len(hashList)
 
 	fmt.Println("* dumping torrent.tsv...")
@@ -85,8 +85,9 @@ func main() {
 	dumpStats()
 }
 
-func processFiles(torrentFiles []string, hashList []string, indexList []int64) []string {
+func processFiles(torrentFiles []string, hashList []string, indexList []int64) {
 
+	newTorrentsCheck := make(map[string]bool)
 	var newTorrents []string
 
 	torrentsFile := *args.dbdir + "/torrents.tsv"
@@ -131,9 +132,17 @@ func processFiles(torrentFiles []string, hashList []string, indexList []int64) [
 		if hashID > len(hashList)-1 || hashList[hashID] != hash {
 
 			line := torrentToLine(t, stat)
-			newTorrents = append(newTorrents, printLine(line))
-			dumpTFiles(fFiles, line, t)
 
+			// skip new hashes from wrongly named torrent files
+			if _, exists := newTorrentsCheck[hash]; exists {
+				continue
+			}
+
+			newTorrents = append(newTorrents, printLine(line))
+			newTorrentsCheck[hash] = true
+
+			dumpTFiles(fFiles, line, t)
+			stats.countNew++
 		} else {
 			updateLine(fTorrents, indexList, hash, hashID, stat)
 		}
@@ -145,32 +154,52 @@ func processFiles(torrentFiles []string, hashList []string, indexList []int64) [
 		fmt.Fprintln(fTorrents, l)
 	}
 
-	return newTorrents
+	return
 }
 
 func updateLine(fTorrents *os.File, indexList []int64, hash string, hashID int,
 	stat os.FileInfo) {
 
+	// get and modify the line
 	_, err := fTorrents.Seek(indexList[hashID], 0)
 	errExit(err)
 
 	var line lineStruct
+	var partName string
 	_, err = fmt.Fscan(fTorrents,
-		&line.hash,
-		&line.size,
-		&line.files,
-		&line.firstSeen,
-		&line.lastSeen,
-		&line.hits)
+		&line.hash, &line.size, &line.files,
+		&line.firstSeen, &line.lastSeen, &line.hits,
+		&partName)
 	errExit(err)
 
 	line.hits++
 	line.lastSeen = stat.ModTime().Format("2006-01-02")
 
-	//check_hash
+	if line.hash != hash {
+		errExit(fmt.Errorf("modifing incorrect hash: %s - %s",
+			hash, line.hash))
+	}
 
+	// update then line
 	_, err = fTorrents.Seek(indexList[hashID], 0)
 	fmt.Fprint(fTorrents, printLine(line))
+
+	// check the line
+	_, err = fTorrents.Seek(indexList[hashID], 0)
+	errExit(err)
+
+	var lineMod lineStruct
+	var partNameMod string
+	_, err = fmt.Fscan(fTorrents,
+		&lineMod.hash, &lineMod.size, &lineMod.files,
+		&lineMod.firstSeen, &lineMod.lastSeen, &lineMod.hits,
+		&partNameMod)
+	errExit(err)
+
+	if !reflect.DeepEqual(line, lineMod) || partName != partNameMod {
+		errExit(fmt.Errorf("writing hash failed: %s - %s",
+			hash, line.hash))
+	}
 
 	stats.countUpdated++
 }
