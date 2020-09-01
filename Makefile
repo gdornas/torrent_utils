@@ -4,3 +4,7 @@ build:
 
 test: build
 	./test/torrentdb.sh
+
+# this requires data outside of this repo
+test_big: build
+	./test/torrentdb_big.sh
