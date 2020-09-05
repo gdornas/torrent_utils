@@ -14,28 +14,26 @@ import (
 )
 
 type argsStruct struct {
+	name       string
+	fileSearch bool
 
-	name	string
-	fileSearch	bool
-
-	minSize int
-	maxSize int
-	minHits int
-	maxHits int
+	minSize  int
+	maxSize  int
+	minHits  int
+	maxHits  int
 	minFiles int
 	maxFiles int
 
 	minFirstSeen string
 	maxFirstSeen string
-	minLastSeen string
-	maxLastSeen string
+	minLastSeen  string
+	maxLastSeen  string
 
-	sortHits bool
-	sortName bool
-	sortSize bool
-	sortFiles bool
+	sortName      bool
+	sortSize      bool
+	sortFiles     bool
 	sortFirstSeen bool
-	sortLastSeen bool
+	sortLastSeen  bool
 }
 
 type lineStruct struct {
@@ -53,27 +51,26 @@ var workers int = 64
 
 func init() {
 
-	flag.StringVar(&args.name, "n", "gentoo", "string to be searched for in torrent name")
-	flag.BoolVar(&args.fileSearch, "N", false, "search also in filenames")
+	flag.StringVar(&args.name, "n", "gentoo", "")
+	flag.BoolVar(&args.fileSearch, "N", false, "")
 
-	flag.IntVar(&args.minSize, "s", 0, "min size in MB")
-	flag.IntVar(&args.minSize, "S", 1073741824, "max size in MB")
-	flag.IntVar(&args.minHits, "h", 0, "min number of hits")
-	flag.IntVar(&args.maxHits, "H", 1073741824, "max number of hits")
-	flag.IntVar(&args.minFiles, "f", 0, "min number of files")
-	flag.IntVar(&args.maxFiles, "F", 1073741824, "max number of files")
+	flag.IntVar(&args.minSize, "s", 0, "")
+	flag.IntVar(&args.minSize, "S", 9999999999, "")
+	flag.IntVar(&args.minHits, "p", 0, "")
+	flag.IntVar(&args.maxHits, "P", 9999999999, "")
+	flag.IntVar(&args.minFiles, "f", 0, "")
+	flag.IntVar(&args.maxFiles, "F", 9999999999, "")
 
-	flag.StringVar(&args.minFirstSeen, "d", "1970-01-01", "min first seen date: YYYY-MM-DD")
-	flag.StringVar(&args.maxFirstSeen, "D", "2100-01-01", "max first seen date: YYYY-MM-DD")
-	flag.StringVar(&args.minLastSeen, "l", "1970-01-01", "min last seen date: YYYY-MM-DD")
-	flag.StringVar(&args.maxLastSeen, "L", "2100-01-01", "max last seen date: YYYY-MM-DD")
+	flag.StringVar(&args.minFirstSeen, "d", "1970-01-01", "")
+	flag.StringVar(&args.maxFirstSeen, "D", "2100-01-01", "")
+	flag.StringVar(&args.minLastSeen, "l", "1970-01-01", "")
+	flag.StringVar(&args.maxLastSeen, "L", "2100-01-01", "")
 
-	flag.BoolVar(&args.sortHits, "1", false, "")
-	flag.BoolVar(&args.sortName, "2", false, "")
-	flag.BoolVar(&args.sortSize, "3", false, "")
-	flag.BoolVar(&args.sortFiles, "4", false, "")
-	flag.BoolVar(&args.sortFirstSeen, "5", false, "")
-	flag.BoolVar(&args.sortLastSeen, "6", false, "")
+	flag.BoolVar(&args.sortName, "1", false, "")
+	flag.BoolVar(&args.sortSize, "2", false, "")
+	flag.BoolVar(&args.sortFiles, "3", false, "")
+	flag.BoolVar(&args.sortFirstSeen, "4", false, "")
+	flag.BoolVar(&args.sortLastSeen, "5", false, "")
 }
 
 func main() {
@@ -165,6 +162,33 @@ func errExit(err error) {
 
 func printUsage() {
 
-	fmt.Printf("Usage: %s [options] <file.torrent>\n", os.Args[0])
-	flag.PrintDefaults()
+	fmt.Printf(`
+usage: %s [options] <torrentdb directory>
+
+name options:
+	-n	string to be searched for in torrent names
+	-N	toggle searching also in the filenames
+
+numeric filters:
+	-s	min size in MB
+	-S	max size in MB
+	-p	min number of hits (p like popularity)
+	-P	max number of hits (P like popularity)
+	-f	min number of files
+	-F	max number of files
+
+date filters (format YYYY-MM-DD):
+	-d	min first seen date
+	-D	max first seen date
+	-l	min last seen date
+	-L	max last seen date
+
+sorting options (default is by hits)
+	-1	by names
+	-2	by size
+	-3	by number of files
+	-4	by first seen
+	-5	by last seen
+
+`, os.Args[0])
 }
