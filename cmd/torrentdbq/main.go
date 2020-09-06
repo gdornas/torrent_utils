@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
-	//"regexp"
+	"regexp"
 	//"sort"
 	"strconv"
 	"strings"
@@ -16,6 +16,9 @@ import (
 type argsStruct struct {
 	name       string
 	fileSearch bool
+	unordered  bool
+	any        bool
+	exact      bool
 
 	minSize  int
 	maxSize  int
@@ -53,13 +56,16 @@ func init() {
 
 	flag.StringVar(&args.name, "n", "gentoo", "")
 	flag.BoolVar(&args.fileSearch, "N", false, "")
+	flag.BoolVar(&args.unordered, "u", false, "")
+	flag.BoolVar(&args.any, "a", false, "")
+	flag.BoolVar(&args.exact, "r", false, "")
 
 	flag.IntVar(&args.minSize, "s", 0, "")
-	flag.IntVar(&args.minSize, "S", 9999999999, "")
+	flag.IntVar(&args.maxSize, "S", 999999999999, "")
 	flag.IntVar(&args.minHits, "p", 0, "")
-	flag.IntVar(&args.maxHits, "P", 9999999999, "")
+	flag.IntVar(&args.maxHits, "P", 999999999999, "")
 	flag.IntVar(&args.minFiles, "f", 0, "")
-	flag.IntVar(&args.maxFiles, "F", 9999999999, "")
+	flag.IntVar(&args.maxFiles, "F", 999999999999, "")
 
 	flag.StringVar(&args.minFirstSeen, "d", "1970-01-01", "")
 	flag.StringVar(&args.maxFirstSeen, "D", "2100-01-01", "")
@@ -78,7 +84,7 @@ func main() {
 	flag.Usage = printUsage
 	flag.Parse()
 
-	file, err := os.Open(os.Args[1])
+	file, err := os.Open(flag.Arg(0))
 	errExit(err)
 	defer file.Close()
 
@@ -110,7 +116,11 @@ func main() {
 	for res := range results {
 		resultList = append(resultList, res)
 	}
-	fmt.Println(len(resultList))
+
+	fmt.Println("Found results:", len(resultList))
+	for _, line := range resultList {
+		printLine(line)
+	}
 }
 
 func filterLines(lines <-chan string, results chan<- lineStruct, wg *sync.WaitGroup) {
@@ -120,11 +130,119 @@ func filterLines(lines <-chan string, results chan<- lineStruct, wg *sync.WaitGr
 	for line := range lines {
 
 		l := parseLine(line)
+		l.size /= (1024 * 1024)
 
-		if l.hits > 8 {
-			results <- l
+		if skipName(l) || skipNumOrDate(l) {
+			continue
+		}
+
+		results <- l
+	}
+}
+
+func skipName(l lineStruct) bool {
+
+	if args.unordered {
+		return noNameUnsorted(l)
+
+	} else if args.any {
+		return noNameAny(l)
+
+	} else if args.exact {
+		return noNameRegexp(l)
+
+	} else {
+		return noNameDefault(l)
+	}
+}
+
+func noNameUnsorted(l lineStruct) bool {
+
+	lowerName := strings.ToLower(l.name)
+	searchStr := strings.ToLower(args.name)
+	words := strings.Split(searchStr, " ")
+
+	for _, word := range words {
+
+		if !strings.Contains(lowerName, word) {
+			return true
 		}
 	}
+
+	return false
+}
+
+func noNameAny(l lineStruct) bool {
+
+	lowerName := strings.ToLower(l.name)
+	searchStr := strings.ToLower(args.name)
+	words := strings.Split(searchStr, " ")
+
+	for _, word := range words {
+
+		if strings.Contains(lowerName, word) {
+			return false
+		}
+	}
+
+	return true
+}
+
+func noNameRegexp(l lineStruct) bool {
+
+	re, err := regexp.Compile(args.name)
+	errExit(err)
+
+	if !re.MatchString(l.name) {
+		return true
+	}
+
+	return false
+}
+
+func noNameDefault(l lineStruct) bool {
+
+	lowerName := strings.ToLower(l.name)
+	searchStr := strings.ToLower(args.name)
+	words := strings.Split(searchStr, " ")
+
+	for _, word := range words {
+
+		lowerNameSlice := strings.Split(lowerName, word)
+
+		if len(lowerNameSlice) == 1 {
+			return true
+		} else {
+			lowerName = lowerNameSlice[1]
+		}
+	}
+
+	return false
+}
+
+func skipNumOrDate(l lineStruct) bool {
+
+	if l.size > args.maxSize || l.size < args.minSize {
+		return true
+	}
+
+	if l.hits > args.maxHits || l.hits < args.minHits {
+		return true
+	}
+
+	if l.files > args.maxFiles || l.files < args.minFiles {
+		return true
+	}
+
+	if l.firstSeen > args.maxFirstSeen || l.firstSeen < args.minFirstSeen {
+		return true
+	}
+
+	if l.lastSeen > args.maxLastSeen || l.lastSeen < args.minLastSeen {
+		return true
+	}
+
+	return false
 }
 
 func parseLine(l string) lineStruct {
@@ -153,6 +271,18 @@ func parseLine(l string) lineStruct {
 	return line
 }
 
+func printLine(line lineStruct) {
+
+	fmt.Printf("%s\t%14d\t%11d\t%s\t%s\t%5d\t%s\n",
+		line.hash,
+		line.size,
+		line.files,
+		line.firstSeen,
+		line.lastSeen,
+		line.hits,
+		line.name)
+}
+
 func errExit(err error) {
 
 	if err != nil {
@@ -165,9 +295,12 @@ func printUsage() {
 	fmt.Printf(`
 usage: %s [options] <torrentdb directory>
 
-name options:
-	-n	string to be searched for in torrent names
+search string options:
+	-n	ordered words to be searched for in torrent names
 	-N	toggle searching also in the filenames
+	-u	toggle search of unordered words in search string
+	-a	toggle search of any word in search string
+	-r	toggle regexp in search string, case sensitive
 
 numeric filters:
 	-s	min size in MB
