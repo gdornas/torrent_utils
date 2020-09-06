@@ -7,7 +7,7 @@ import (
 	"log"
 	"os"
 	"regexp"
-	//"sort"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,7 +50,7 @@ type lineStruct struct {
 }
 
 var args argsStruct
-var workers int = 64
+var workers int = 16
 
 func init() {
 
@@ -84,81 +84,178 @@ func main() {
 	flag.Usage = printUsage
 	flag.Parse()
 
-	file, err := os.Open(flag.Arg(0))
-	errExit(err)
-	defer file.Close()
+	// list containing hashes where search string matched a filename
+	searchFileList := searchFiles()
+	results := searchTorrents(searchFileList)
 
-	lines := make(chan string)
-	results := make(chan lineStruct)
+	fmt.Println("files found:", len(searchFileList))
+	fmt.Println("files found:", searchFileList)
+	fmt.Println("Found results:", len(results))
 
-	wg := new(sync.WaitGroup)
-
-	for w := 1; w <= workers; w++ {
-		wg.Add(1)
-		go filterLines(lines, results, wg)
-	}
-
-	go func() {
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			lines <- scanner.Text()
-		}
-		close(lines)
-	}()
-
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	var resultList []lineStruct
-
-	for res := range results {
-		resultList = append(resultList, res)
-	}
-
-	fmt.Println("Found results:", len(resultList))
-	for _, line := range resultList {
+	for _, line := range results {
 		printLine(line)
 	}
 }
 
-func filterLines(lines <-chan string, results chan<- lineStruct, wg *sync.WaitGroup) {
+func searchTorrents(searchFileList []string) []lineStruct {
+
+	fh, err := os.Open(flag.Arg(0) + "/torrents.tsv")
+	errExit(err)
+	defer fh.Close()
+
+	var results []lineStruct
+	linesCh := make(chan lineStruct)
+	resultsCh := make(chan lineStruct)
+	wg := new(sync.WaitGroup)
+
+	for w := 1; w <= workers; w++ {
+		wg.Add(1)
+		go filterTorrents(linesCh, resultsCh, wg)
+	}
+
+	go func() {
+		scanner := bufio.NewScanner(fh)
+		for scanner.Scan() {
+
+			line := parseLine(scanner.Text())
+
+			i := sort.SearchStrings(searchFileList, line.hash)
+
+			if i > len(searchFileList)-1 || searchFileList[i] != line.hash {
+				linesCh <- line
+			} else {
+				//if skipNumOrDate(line) {
+				//	continue
+				//}
+				results = append(results, line)
+			}
+		}
+		close(linesCh)
+	}()
+
+	go func() {
+		wg.Wait()
+		close(resultsCh)
+	}()
+
+	for res := range resultsCh {
+		results = append(results, res)
+	}
+
+	return results
+}
+
+func searchFiles() []string {
+
+	var searchFileList []string
+
+	if !args.fileSearch {
+		return searchFileList
+	}
+
+	fh, err := os.Open(flag.Arg(0) + "/files.tsv")
+	errExit(err)
+	defer fh.Close()
+
+	filesCh := make(chan []string)
+	searchFileListCh := make(chan string)
+	wg := new(sync.WaitGroup)
+
+	for w := 1; w <= workers; w++ {
+		wg.Add(1)
+		go filterFiles(filesCh, searchFileListCh, wg)
+	}
+
+	go func() {
+		scanner := bufio.NewScanner(fh)
+		var files []string
+
+		for scanner.Scan() {
+
+			l := scanner.Text()
+
+			if l == "---" {
+				filesCh <- files
+				files = nil
+			} else if strings.HasPrefix(l, "hash: ") {
+				hash := strings.Split(l, " ")[1]
+				files = append(files, hash)
+			} else {
+				name := strings.Split(l, "\t")[1]
+				files = append(files, name)
+			}
+		}
+		close(filesCh)
+	}()
+
+	go func() {
+		wg.Wait()
+		close(searchFileListCh)
+	}()
+
+	for res := range searchFileListCh {
+		searchFileList = append(searchFileList, res)
+	}
+	sort.Strings(searchFileList)
+
+	return searchFileList
+}
+
+func filterTorrents(linesCh <-chan lineStruct, results chan<- lineStruct, wg *sync.WaitGroup) {
 
 	defer wg.Done()
 
-	for line := range lines {
+	for line := range linesCh {
 
-		l := parseLine(line)
-		l.size /= (1024 * 1024)
+		line.size /= (1024 * 1024)
 
-		if skipName(l) || skipNumOrDate(l) {
+		if skipName(line.name) || skipNumOrDate(line) {
 			continue
 		}
 
-		results <- l
+		results <- line
 	}
 }
 
-func skipName(l lineStruct) bool {
+func filterFiles(filesCh <-chan []string, searchFileListCh chan<- string, wg *sync.WaitGroup) {
+
+	defer wg.Done()
+
+	for files := range filesCh {
+
+		if len(files) == 0 {
+			continue
+		}
+
+		hash := files[0]
+		for _, name := range files[1:] {
+			if skipName(name) {
+				continue
+			}
+			searchFileListCh <- hash
+		}
+	}
+}
+
+func skipName(name string) bool {
 
 	if args.unordered {
-		return noNameUnsorted(l)
+		return noNameUnsorted(name)
 
 	} else if args.any {
-		return noNameAny(l)
+		return noNameAny(name)
 
 	} else if args.exact {
-		return noNameRegexp(l)
+		return noNameRegexp(name)
 
 	} else {
-		return noNameDefault(l)
+		return noNameDefault(name)
 	}
 }
 
-func noNameUnsorted(l lineStruct) bool {
+func noNameUnsorted(name string) bool {
 
-	lowerName := strings.ToLower(l.name)
+	lowerName := strings.ToLower(name)
 	searchStr := strings.ToLower(args.name)
 	words := strings.Split(searchStr, " ")
 
@@ -172,9 +269,9 @@ func noNameUnsorted(l lineStruct) bool {
 	return false
 }
 
-func noNameAny(l lineStruct) bool {
+func noNameAny(name string) bool {
 
-	lowerName := strings.ToLower(l.name)
+	lowerName := strings.ToLower(name)
 	searchStr := strings.ToLower(args.name)
 	words := strings.Split(searchStr, " ")
 
@@ -188,21 +285,21 @@ func noNameAny(l lineStruct) bool {
 	return true
 }
 
-func noNameRegexp(l lineStruct) bool {
+func noNameRegexp(name string) bool {
 
 	re, err := regexp.Compile(args.name)
 	errExit(err)
 
-	if !re.MatchString(l.name) {
+	if !re.MatchString(name) {
 		return true
 	}
 
 	return false
 }
 
-func noNameDefault(l lineStruct) bool {
+func noNameDefault(name string) bool {
 
-	lowerName := strings.ToLower(l.name)
+	lowerName := strings.ToLower(name)
 	searchStr := strings.ToLower(args.name)
 	words := strings.Split(searchStr, " ")
 
@@ -273,7 +370,7 @@ func parseLine(l string) lineStruct {
 
 func printLine(line lineStruct) {
 
-	fmt.Printf("%s\t%14d\t%11d\t%s\t%s\t%5d\t%s\n",
+	fmt.Printf("%s\t%6d\t%5d\t%s\t%s\t%4d\t%s\n",
 		line.hash,
 		line.size,
 		line.files,
