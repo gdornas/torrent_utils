@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -89,7 +88,6 @@ func main() {
 	results := searchTorrents(searchFileList)
 
 	fmt.Println("files found:", len(searchFileList))
-	fmt.Println("files found:", searchFileList)
 	fmt.Println("Found results:", len(results))
 
 	for _, line := range results {
@@ -97,7 +95,7 @@ func main() {
 	}
 }
 
-func searchTorrents(searchFileList []string) []lineStruct {
+func searchTorrents(searchFileList map[string]bool) []lineStruct {
 
 	fh, err := os.Open(flag.Arg(0) + "/torrents.tsv")
 	errExit(err)
@@ -119,15 +117,14 @@ func searchTorrents(searchFileList []string) []lineStruct {
 
 			line := parseLine(scanner.Text())
 
-			i := sort.SearchStrings(searchFileList, line.hash)
-
-			if i > len(searchFileList)-1 || searchFileList[i] != line.hash {
-				linesCh <- line
-			} else {
-				//if skipNumOrDate(line) {
-				//	continue
-				//}
+			_, keyExists := searchFileList[line.hash]
+			if keyExists {
+				if skipNumOrDate(line) {
+					continue
+				}
 				results = append(results, line)
+			} else {
+				linesCh <- line
 			}
 		}
 		close(linesCh)
@@ -145,9 +142,9 @@ func searchTorrents(searchFileList []string) []lineStruct {
 	return results
 }
 
-func searchFiles() []string {
+func searchFiles() map[string]bool {
 
-	var searchFileList []string
+	searchFileList := make(map[string]bool)
 
 	if !args.fileSearch {
 		return searchFileList
@@ -194,9 +191,8 @@ func searchFiles() []string {
 	}()
 
 	for res := range searchFileListCh {
-		searchFileList = append(searchFileList, res)
+		searchFileList[res] = true
 	}
-	sort.Strings(searchFileList)
 
 	return searchFileList
 }
