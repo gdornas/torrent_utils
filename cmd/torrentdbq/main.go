@@ -48,6 +48,12 @@ type lineStruct struct {
 	name      string
 }
 
+type filesStruct struct {
+	hash  string
+	names []string
+	sizes []int
+}
+
 var args argsStruct
 var workers int = 16
 
@@ -83,8 +89,11 @@ func main() {
 	flag.Usage = printUsage
 	flag.Parse()
 
-	// list containing hashes where search string matched a filename
+	// a map containing hashes with filenames where search string
+	// matched a filename
 	searchFileList := searchFiles()
+
+	// final list of torrents with matched search string
 	results := searchTorrents(searchFileList)
 
 	fmt.Println("files found:", len(searchFileList))
@@ -92,10 +101,15 @@ func main() {
 
 	for _, line := range results {
 		printLine(line)
+		for i, file := range searchFileList[line.hash].names {
+			fmt.Printf("%8d   %s\n",
+				searchFileList[line.hash].sizes[i],
+				file)
+		}
 	}
 }
 
-func searchTorrents(searchFileList map[string]bool) []lineStruct {
+func searchTorrents(searchFileList map[string]filesStruct) []lineStruct {
 
 	fh, err := os.Open(flag.Arg(0) + "/torrents.tsv")
 	errExit(err)
@@ -116,6 +130,7 @@ func searchTorrents(searchFileList map[string]bool) []lineStruct {
 		for scanner.Scan() {
 
 			line := parseLine(scanner.Text())
+			line.size /= (1024 * 1024)
 
 			_, keyExists := searchFileList[line.hash]
 			if keyExists {
@@ -142,9 +157,9 @@ func searchTorrents(searchFileList map[string]bool) []lineStruct {
 	return results
 }
 
-func searchFiles() map[string]bool {
+func searchFiles() map[string]filesStruct {
 
-	searchFileList := make(map[string]bool)
+	searchFileList := make(map[string]filesStruct)
 
 	if !args.fileSearch {
 		return searchFileList
@@ -154,8 +169,8 @@ func searchFiles() map[string]bool {
 	errExit(err)
 	defer fh.Close()
 
-	filesCh := make(chan []string)
-	searchFileListCh := make(chan string)
+	filesCh := make(chan filesStruct)
+	searchFileListCh := make(chan filesStruct)
 	wg := new(sync.WaitGroup)
 
 	for w := 1; w <= workers; w++ {
@@ -165,7 +180,7 @@ func searchFiles() map[string]bool {
 
 	go func() {
 		scanner := bufio.NewScanner(fh)
-		var files []string
+		var files filesStruct
 
 		for scanner.Scan() {
 
@@ -173,13 +188,17 @@ func searchFiles() map[string]bool {
 
 			if l == "---" {
 				filesCh <- files
-				files = nil
+				files = filesStruct{}
 			} else if strings.HasPrefix(l, "hash: ") {
-				hash := strings.Split(l, " ")[1]
-				files = append(files, hash)
+				files.hash = strings.Split(l, " ")[1]
 			} else {
-				name := strings.Split(l, "\t")[1]
-				files = append(files, name)
+				s := strings.Split(l, "\t")
+				name := s[1]
+				size, err := strconv.Atoi(s[0])
+				errExit(err)
+
+				files.names = append(files.names, name)
+				files.sizes = append(files.sizes, size/(1024*1024))
 			}
 		}
 		close(filesCh)
@@ -190,20 +209,19 @@ func searchFiles() map[string]bool {
 		close(searchFileListCh)
 	}()
 
-	for res := range searchFileListCh {
-		searchFileList[res] = true
+	for files := range searchFileListCh {
+		searchFileList[files.hash] = filesStruct{names: files.names, sizes: files.sizes}
 	}
 
 	return searchFileList
 }
 
-func filterTorrents(linesCh <-chan lineStruct, results chan<- lineStruct, wg *sync.WaitGroup) {
+func filterTorrents(linesCh <-chan lineStruct, results chan<- lineStruct,
+	wg *sync.WaitGroup) {
 
 	defer wg.Done()
 
 	for line := range linesCh {
-
-		line.size /= (1024 * 1024)
 
 		if skipName(line.name) || skipNumOrDate(line) {
 			continue
@@ -213,22 +231,19 @@ func filterTorrents(linesCh <-chan lineStruct, results chan<- lineStruct, wg *sy
 	}
 }
 
-func filterFiles(filesCh <-chan []string, searchFileListCh chan<- string, wg *sync.WaitGroup) {
+func filterFiles(filesCh <-chan filesStruct,
+	searchFileListCh chan<- filesStruct,
+	wg *sync.WaitGroup) {
 
 	defer wg.Done()
 
 	for files := range filesCh {
 
-		if len(files) == 0 {
-			continue
-		}
-
-		hash := files[0]
-		for _, name := range files[1:] {
+		for _, name := range files.names {
 			if skipName(name) {
 				continue
 			}
-			searchFileListCh <- hash
+			searchFileListCh <- files
 		}
 	}
 }
