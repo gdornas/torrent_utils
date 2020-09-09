@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -55,7 +56,7 @@ type filesStruct struct {
 }
 
 var args argsStruct
-var workers int = 16
+var workers int = 32
 
 func init() {
 
@@ -95,18 +96,21 @@ func main() {
 
 	// final list of torrents with matched search string
 	results := searchTorrents(searchFileList)
+	sortedIndexes := sortResults(results)
 
-	fmt.Println("files found:", len(searchFileList))
-	fmt.Println("Found results:", len(results))
+	// print results
+	for _, index := range sortedIndexes {
 
-	for _, line := range results {
+		line := results[index]
 		printLine(line)
+
 		for i, file := range searchFileList[line.hash].names {
 			fmt.Printf("%8d   %s\n",
 				searchFileList[line.hash].sizes[i],
 				file)
 		}
 	}
+	fmt.Println("Results:", len(results))
 }
 
 func searchTorrents(searchFileList map[string]filesStruct) []lineStruct {
@@ -351,6 +355,49 @@ func skipNumOrDate(l lineStruct) bool {
 	}
 
 	return false
+}
+
+func sortResults(results []lineStruct) []int {
+
+	type iv struct {
+		index int
+		value string
+	}
+
+	var ss []iv
+	var sortedIndexes []int
+
+	for i, line := range results {
+
+		var v string
+
+		switch true {
+
+		case args.sortName:
+			v = strings.ToLower(line.name)
+		case args.sortSize:
+			v = fmt.Sprintf("%10d", line.size)
+		case args.sortFiles:
+			v = fmt.Sprintf("%10d", line.files)
+		case args.sortFirstSeen:
+			v = line.firstSeen
+		case args.sortLastSeen:
+			v = line.lastSeen
+		default:
+			v = fmt.Sprintf("%10d", line.hits)
+		}
+		ss = append(ss, iv{i, v})
+	}
+
+	sort.Slice(ss, func(i, j int) bool {
+		return ss[i].value < ss[j].value
+	})
+
+	for _, iv := range ss {
+		sortedIndexes = append(sortedIndexes, iv.index)
+	}
+
+	return sortedIndexes
 }
 
 func parseLine(l string) lineStruct {
