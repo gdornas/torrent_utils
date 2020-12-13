@@ -17,6 +17,7 @@ import (
 type argsStruct struct {
 	seeders    int
 	downloaded int
+	leechers   int
 	terse      bool
 }
 
@@ -37,6 +38,7 @@ type statsStruct struct {
 	band_100_999   int
 	band_1000_9999 int
 	band_10000_inf int
+	val	       int
 }
 
 var args argsStruct
@@ -46,6 +48,7 @@ func init() {
 
 	flag.IntVar(&args.seeders, "s", 0, "")
 	flag.IntVar(&args.downloaded, "d", 0, "")
+	flag.IntVar(&args.leechers, "l", 0, "")
 	flag.BoolVar(&args.terse, "t", false, "")
 }
 
@@ -81,6 +84,7 @@ func main() {
 	for infoHash, item := range scrape.Files {
 
 		infoHash = hex.EncodeToString([]byte(infoHash))
+
 		updateStats(infoHash, item, &seedStats, "seeders")
 		updateStats(infoHash, item, &downStats, "downloaded")
 		updateStats(infoHash, item, &leechStats, "leechers")
@@ -93,11 +97,19 @@ func main() {
 			continue
 		}
 
+		if item.Leechers < args.leechers {
+			continue
+		}
+
+		if infoHash == "0000000000000000000000000000000000000000" {
+			continue
+		}
+
 		printEntry(outF, infoHash, item)
 	}
 
 	// dump stats to stdout
-	output := fmt.Sprintf("%v %v %v %d\n", seedStats, downStats, leechStats, totalItems)
+	output := fmt.Sprintf("%v %v %v %d", seedStats, downStats, leechStats, totalItems)
 	output = strings.Replace(output, "{", "", -1)
 	output = strings.Replace(output, "}", "", -1)
 	output = strings.Replace(output, " ", "\t", -1)
@@ -119,6 +131,8 @@ func updateStats(infoHash string, item scrapeItem, stats *statsStruct, statType 
 	case "leechers":
 		val = item.Leechers
 	}
+
+	stats.val += val
 
 	if val == 0 {
 		stats.zero++
@@ -162,6 +176,7 @@ usage: %s [options] <torrent scrape file>
 
 options:
 	-s	min number of seeders to include in output
+	-l	min number of leechers to include in output
 	-d	min number of downloaded to include in output
 	-t	terse output, dump just hashses without torrent stats
 
