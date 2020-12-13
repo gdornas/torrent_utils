@@ -325,7 +325,7 @@ func noNameDefault(name string) bool {
 		if len(lowerNameSlice) == 1 {
 			return true
 		} else {
-			lowerName = lowerNameSlice[1]
+			lowerName = strings.Join(lowerNameSlice[1:], word)
 		}
 	}
 
